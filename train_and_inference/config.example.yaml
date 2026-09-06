@@ -23,9 +23,8 @@ horizon_weights: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
 learning_rate: 0.0001
 batch_size: 1024
 shuffle_buffer: 5000
-# The window stream is endless (183 windows x 161,250 series), so the epoch
-# length is declared rather than derived. A full pass would be ~28,817 batches.
-steps_per_epoch: 160
+
+
 epochs: 1000
 gradient_clip_val: null   # no clipping
 seed: 42
