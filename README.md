@@ -24,7 +24,7 @@ you can use the convert_prior.py file if you have generated it from the syntheti
 the you can put in the prior file in /train_and_inference
 ```
 prior/m3_yearly_200.y.npy      
-prior/m3_yearly_200.meta.npz    anchors
+prior/m3_yearly_200.meta.npz    
 ```
 
 Regenerate only if the generator CSV changes:
