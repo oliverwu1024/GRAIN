@@ -1,0 +1,1327 @@
+---
+title: "blgt2"
+output: html_document
+date: "2025-09-22"
+---
+
+```{r}
+library(ggplot2)
+library(Rlgt)
+library(forecast)
+
+# Fixed blgt_forecast_from_zero with better randomization
+blgt_forecast_from_zero_fixed <- function(rv, h, ns = 1e+06, 
+                                          initial_level = NULL,
+                                          initial_trend = NULL,
+                                          initial_seasonal = NULL,
+                                          initial_error = NULL,
+                                          seed = 42) {
+  
+  # set seed to allow different scenarios
+  if (!is.null(seed)) {
+    set.seed(seed)
+  }
+  
+  # Get model parameters
+  n = length(rv$y)
+  n.samples = rv$n.samples
+  m = rv$m  # seasonality period
+  
+  # get different draws
+  I = sample(n.samples, ns, replace = TRUE)
+  
+  # allow customised trend
+  if (!is.null(initial_trend)) {
+    bS = rep(initial_trend, ns)
+  } else {
+    bS = rv$bt[I]  #Original: Uses last values from training data
+  }
+  
+  #allow customised level
+  if (!is.null(initial_level)) {
+    prev.level = rep(initial_level, ns)
+  } else {
+    prev.level = rv$lt[I]  # Original: Uses last values from training data
+  }
+  
+  #allow customised error
+  if (!is.null(initial_error)) {
+    error = rep(initial_error, ns)
+  } else {
+    error = rv$et[I] # Original: Uses last values from training data
+  }
+  
+  # forecast matrix
+  yf = matrix(0, ns, h)
+  
+  # Handle seasonality
+  seasonal = FALSE
+  if (m > 1) {
+    seasonal = TRUE
+    log.s = matrix(0, ns, m + h)
+    y.on.l = matrix(0, ns, m + h)
+    
+    # allow customisable seasonality
+    if (!is.null(initial_seasonal) && length(initial_seasonal) >= m) {
+      for (j in 1:m) {
+        log.s[, j] = log(initial_seasonal[j])
+      }
+      y.on.l[, 1:m] = 0
+    } else {
+      log.s[, 1:m] = rv$log.s[I, ]  # Original: Always uses seasonal from end of training
+      y.on.l[, 1:m] = rv$y.on.l[I, ]
+    }
+  }
+  
+  # Generate forecasts - each path will be different due to different I samples
+  for (i in 1:h) {
+    if (seasonal) {
+      log.s[, i + m] = rv$zeta[I] * y.on.l[, i] + (1 - rv$zeta[I]) * log.s[, i]
+      log.s[, i + m] = 4 * 1/(1 + exp(-log.s[, i + m])) - 2
+    }
+    
+    l = prev.level
+    
+    if (seasonal) {
+      exp.val = exp(log.s[, i + m]) * (l + rv$w[I, 1] * l^rv$rho[I] + rv$w[I, 2] * bS)
+    } else {
+      exp.val = l + rv$w[I, 1] * l^rv$rho[I] + rv$w[I, 2] * bS
+    }
+    
+    scale = sqrt(rv$xi2[I] + rv$sigma2[I] * l^(2 * rv$tau[I]))
+    
+    # Generate different random errors for each sample
+    e = rt(ns, rv$nu[I]) * scale
+    
+    yf[, i] = pmax(pmin(exp.val + e, 1e+38), 0.001)
+    
+    if (seasonal) {
+      cur.level = pmax(0.001, rv$alpha[I] * yf[, i]/exp(log.s[, i + m]) + 
+                         (1 - rv$alpha[I]) * prev.level)
+    } else {
+      cur.level = pmax(0.001, rv$alpha[I] * yf[, i] + (1 - rv$alpha[I]) * prev.level)
+    }
+    
+    idx <- which(yf[, i] <= 0.001)
+    cur.level[idx] <- prev.level[idx]
+    
+    if (seasonal) {
+      y.on.l[, i + m] = log(yf[, i]/cur.level)
+      y.on.l[idx, i + m] <- y.on.l[idx, i]
+    }
+    
+    bS = rv$beta[I] * (cur.level - prev.level) + (1 - rv$beta[I]) * bS
+    prev.level = cur.level
+  }
+  
+  # Return different quantiles to show variation
+  list(
+    yf.med = apply(yf, 2, function(x) { quantile(x, 0.5) }),
+    yf.CI05 = apply(yf, 2, function(x) { quantile(x, 0.025) }),
+    yf.CI95 = apply(yf, 2, function(x) { quantile(x, 0.975) }),
+    yf = yf
+  )
+}
+
+# Helper function to detect frequency from timestamps
+detect_frequency <- function(timestamps) {
+  
+  if (length(timestamps) < 2) {
+    return(12)  # Default to monthly
+  }
+  
+  # Convert to proper datetime format if needed
+  timestamps <- parse_timestamps(timestamps)
+  
+  # Calculate differences between consecutive timestamps
+  time_diffs <- as.numeric(diff(sort(timestamps)))
+  median_diff <- median(time_diffs, na.rm = TRUE)
+  
+  # Classify based on median difference
+  if (inherits(timestamps[1], "POSIXt")) {
+    if (median_diff <= 3600) {
+      return(24)
+    } else if (median_diff <= 86400) {
+      return(365)
+    } else if (median_diff <= 604800) {
+      return(52)
+    } else if (median_diff <= 2678400) {
+      return(12)
+    } else if (median_diff <= 7776000) {
+      return(4)
+    } else {
+      return(1)
+    }
+  } else {
+    if (median_diff < 1.5) {
+      return(365)
+    } else if (median_diff < 8) {
+      return(52)
+    } else if (median_diff < 35) {
+      return(12)
+    } else if (median_diff < 100) {
+      return(4)
+    } else {
+      return(1)
+    }
+  }
+}
+
+# Helper function to parse various timestamp formats
+parse_timestamps <- function(timestamps) {
+  
+  tryCatch({
+    if (is.character(timestamps) || is.factor(timestamps)) {
+      timestamps <- as.character(timestamps)
+      
+      if (all(grepl("^\\d{4}-\\d{2}$", timestamps[!is.na(timestamps)]))) {
+        return(as.Date(paste0(timestamps, "-01")))
+      }
+      
+      if (all(grepl("^\\d{4}-\\d{2}-\\d{2}$", timestamps[!is.na(timestamps)]))) {
+        return(as.Date(timestamps))
+      }
+      
+      if (all(grepl("^\\d{4}$", timestamps[!is.na(timestamps)]))) {
+        return(as.Date(paste0(timestamps, "-01-01")))
+      }
+      
+      if (all(grepl("^\\d{4}-Q[1-4]$", timestamps[!is.na(timestamps)]))) {
+        quarters <- gsub("^(\\d{4})-Q([1-4])$", "\\1-\\2", timestamps)
+        quarters <- gsub("-1$", "-01-01", quarters)
+        quarters <- gsub("-2$", "-04-01", quarters)
+        quarters <- gsub("-3$", "-07-01", quarters)
+        quarters <- gsub("-4$", "-10-01", quarters)
+        return(as.Date(quarters))
+      }
+      
+      datetime_result <- tryCatch({
+        as.POSIXct(timestamps)
+      }, error = function(e) NULL)
+      
+      if (!is.null(datetime_result) && !all(is.na(datetime_result))) {
+        return(datetime_result)
+      }
+      
+      return(as.Date(timestamps))
+      
+    } else if (is.numeric(timestamps)) {
+      return(timestamps)
+    } else {
+      return(timestamps)
+    }
+    
+  }, error = function(e) {
+    message("Warning: Could not parse timestamps, using sequential numbers")
+    return(seq_along(timestamps))
+  })
+}
+
+# Helper function to generate future timestamps
+# date_convention: "first" = start of period, "last" = end of period
+generate_future_timestamps <- function(start_date, n_points, frequency,
+                                       date_convention = "last") {
+  
+  tryCatch({
+    if (inherits(start_date, "Date")) {
+      
+      if (frequency == 12) {
+        # Monthly
+        first_of_months <- seq(from = as.Date(format(start_date, "%Y-%m-01")),
+                               length.out = n_points, by = "month")
+        if (date_convention == "last") {
+          # Last day of each month (Jan 31, Feb 28, Mar 31, ...)
+          return(as.Date(format(first_of_months + 31, "%Y-%m-01")) - 1)
+        } else {
+          # First day of each month (Jan 1, Feb 1, Mar 1, ...)
+          return(first_of_months)
+        }
+        
+      } else if (frequency == 4) {
+        # Quarterly
+        first_of_quarters <- seq(from = as.Date(format(start_date, "%Y-%m-01")),
+                                 length.out = n_points, by = "3 months")
+        if (date_convention == "last") {
+          # Last day of Mar, Jun, Sep, Dec
+          return(as.Date(format(first_of_quarters + 31, "%Y-%m-01")) - 1)
+        } else {
+          # First day of Jan, Apr, Jul, Oct
+          quarter_months <- c(1, 4, 7, 10)
+          month_num <- as.numeric(format(start_date, "%m"))
+          start_qm <- quarter_months[which.min(abs(quarter_months - month_num))]
+          first_date <- as.Date(paste0(format(start_date, "%Y"), "-",
+                                       sprintf("%02d", start_qm), "-01"))
+          return(seq(from = first_date, length.out = n_points, by = "3 months"))
+        }
+        
+      } else if (frequency == 1) {
+        # Yearly
+        years <- as.numeric(format(start_date, "%Y")) + 0:(n_points - 1)
+        if (date_convention == "last") {
+          # Dec 31
+          return(as.Date(paste0(years, "-12-31")))
+        } else {
+          # Jan 1
+          return(as.Date(paste0(years, "-01-01")))
+        }
+        
+      } else if (frequency == 365) {
+        return(seq(from = start_date, length.out = n_points, by = "day"))
+      } else if (frequency == 52) {
+        return(seq(from = start_date, length.out = n_points, by = "week"))
+      } else {
+        return(seq(from = start_date, length.out = n_points, by = "month"))
+      }
+      
+    } else if (inherits(start_date, "POSIXt")) {
+      if (frequency == 24) {
+        return(seq(from = start_date, length.out = n_points, by = "hour"))
+      } else if (frequency == 365) {
+        return(seq(from = start_date, length.out = n_points, by = "day"))
+      } else if (frequency == 52) {
+        return(seq(from = start_date, length.out = n_points, by = "week"))
+      } else if (frequency == 12) {
+        return(seq(from = start_date, length.out = n_points, by = "month"))
+      } else if (frequency == 4) {
+        return(seq(from = start_date, length.out = n_points, by = "quarter"))
+      } else if (frequency == 1) {
+        return(seq(from = start_date, length.out = n_points, by = "year"))
+      } else {
+        return(seq(from = start_date, length.out = n_points, by = "hour"))
+      }
+      
+    } else if (is.numeric(start_date)) {
+      time_step <- 1
+      if (frequency == 24) time_step <- 1/24
+      else if (frequency == 365) time_step <- 1
+      else if (frequency == 52) time_step <- 7
+      else if (frequency == 12) time_step <- 30
+      else if (frequency == 4) time_step <- 91
+      else if (frequency == 1) time_step <- 365
+      
+      return(seq(from = start_date, length.out = n_points, by = time_step))
+      
+    } else {
+      return(seq_len(n_points))
+    }
+    
+  }, error = function(e) {
+    message("Warning: Using sequential timestamps due to error: ", e$message)
+    return(seq_len(n_points))
+  })
+}
+
+# Enhanced individual series generation function
+generate_synthetic_series_individual <- function(series_data, n_synthetic = NULL, 
+                                                 n_scenarios = 1, frequency = NULL,
+                                                 control_params = NULL, first_fraction = 0.5) {
+  
+  # Extract series information
+  series_name <- unique(series_data$series_name)[1]
+  series_values <- series_data$series_value
+  
+  # Check for additional columns
+  extra_cols <- setdiff(names(series_data), c("series_name", "start_timestamp", "series_value"))
+  extra_data <- if(length(extra_cols) > 0) {
+    series_data[1, extra_cols, drop = FALSE]
+  } else {
+    NULL
+  }
+  
+  if (is.null(n_synthetic)) {
+    n_synthetic <- length(series_values)
+  }
+  
+  # Auto-detect frequency if not provided
+  if (is.null(frequency)) {
+    frequency <- detect_frequency(series_data$start_timestamp)
+    message(paste("Auto-detected frequency:", frequency, "for series:", series_name))
+  }
+  
+  # Convert to ts object
+  ts_data <- ts(series_values, frequency = frequency)
+  
+  message(paste("Fitting RLGT model for series:", series_name))
+  
+  # Set control parameters
+  if (is.null(control_params)) {
+    control_params <- rlgt.control()
+  }
+  
+  # Get original timestamp info for proper timestamp generation
+  original_timestamps <- series_data$start_timestamp
+  
+  # Convert timestamps to proper format if needed
+  if (is.character(original_timestamps) || is.factor(original_timestamps)) {
+    original_timestamps <- parse_timestamps(original_timestamps)
+  }
+  
+  original_timestamps <- sort(original_timestamps)
+  start_date <- min(original_timestamps)
+  
+  tryCatch({
+    # Fit model
+    rlgt_model <- rlgt(
+      y = ts_data,
+      method = "Gibbs",
+      control = control_params,
+      verbose = FALSE
+    )
+    
+    # Generate scenarios with different random paths
+    scenarios_list <- list()
+    
+    for (scenario in 1:n_scenarios) {
+      
+      # 50/50 date convention: first half "first", second half "last"
+      convention <- if (scenario <= n_scenarios * first_fraction) "first" else "last"
+      
+      # Generate different initial conditions for each scenario
+      initial_level <- max(0, sample(series_values, 1) + 0.05 * sd(series_values) * rt(1, df = 3))
+      initial_trend <- sample(diff(series_values), 1)
+      
+      # Handle seasonal components based on frequency
+      if (frequency > 1) {
+        initial_seasonal <- rep(1, frequency)
+        n_obs <- length(series_values)
+        
+        if (n_obs >= frequency) {
+          max_start <- n_obs - frequency + 1
+          start_idx <- sample(1:max_start, 1)
+          random_cycle <- series_values[start_idx:(start_idx + frequency - 1)]
+          cycle_mean <- mean(random_cycle, na.rm = TRUE)
+          if (cycle_mean > 0) {
+            initial_seasonal <- random_cycle / cycle_mean
+          }
+        }
+      } else {
+        initial_seasonal <- NULL
+      }
+      
+      # Generate a SINGLE path for this scenario
+      n_paths <- 100
+      
+      synthetic_result <- blgt_forecast_from_zero_fixed(
+        rv = rlgt_model,
+        h = n_synthetic,
+        ns = n_paths,
+        initial_level = initial_level,
+        initial_trend = initial_trend,
+        initial_seasonal = initial_seasonal,
+        seed = NULL  
+      )
+      
+      # Pick a random path from the generated paths
+      path_idx <- sample(1:n_paths, 1)
+      synthetic_values <- synthetic_result$yf[path_idx, ]
+      
+      # Generate proper timestamps with 50/50 convention
+      new_timestamps <- generate_future_timestamps(start_date, n_synthetic, 
+                                                   frequency, convention)
+      
+      # Create scenario data with proper timestamps
+      scenario_df <- data.frame(
+        series_name = paste0(series_name, "_synthetic_", scenario),
+        start_timestamp = new_timestamps,
+        series_value = synthetic_values,
+        original_series = series_name,
+        scenario = scenario,
+        frequency_detected = frequency,
+        date_convention = convention,
+        lower_95 = synthetic_result$yf.CI05,
+        upper_95 = synthetic_result$yf.CI95
+      )
+      
+      # Add extra columns if they exist
+      if (!is.null(extra_data)) {
+        for (col in names(extra_data)) {
+          scenario_df[[col]] <- extra_data[[col]]
+        }
+      }
+      
+      scenarios_list[[scenario]] <- scenario_df
+    }
+    
+    return(list(
+      success = TRUE,
+      scenarios = scenarios_list,
+      model = rlgt_model,
+      series_name = series_name,
+      detected_frequency = frequency,
+      initial_conditions = list(
+        level = initial_level,
+        trend = initial_trend,
+        seasonal = initial_seasonal
+      )
+    ))
+    
+  }, error = function(e) {
+    message(paste("Error processing", series_name, ":", e$message))
+    return(list(
+      success = FALSE,
+      error = e$message,
+      series_name = series_name
+    ))
+  })
+}
+
+# Enhanced main generation function with auto-frequency detection
+generate_synthetic_dataset_fixed <- function(data, n_synthetic = NULL, 
+                                             n_scenarios = 1, frequency = NULL,
+                                             parallel = TRUE, n_cores = NULL,
+                                             control_params = NULL,
+                                             series_column = "series_name",
+                                             timestamp_column = "start_timestamp",
+                                             value_column = "series_value", first_fraction = 0.5) {
+  
+  # Validate required columns
+  required_cols <- c(series_column, timestamp_column, value_column)
+  if (!all(required_cols %in% names(data))) {
+    stop(paste("Missing required columns. Expected:", paste(required_cols, collapse = ", ")))
+  }
+  
+  # Standardize column names
+  data_std <- data
+  names(data_std)[names(data_std) == series_column] <- "series_name"
+  names(data_std)[names(data_std) == timestamp_column] <- "start_timestamp"
+  names(data_std)[names(data_std) == value_column] <- "series_value"
+  
+  # Get unique series
+  unique_series <- unique(data_std$series_name)
+  n_series <- length(unique_series)
+  
+  message(paste("Processing", n_series, "series from dataset"))
+  message(paste("Generating", n_scenarios, "scenarios per series"))
+  message(paste0("Date convention split: ", round(first_fraction*100), "% 'first', ", round((1-first_fraction)*100), "% 'last'"))
+  if (is.null(frequency)) {
+    message("Auto-detecting frequency for each series")
+  } else {
+    message(paste("Using fixed frequency:", frequency))
+  }
+  
+  # Process each series
+  if (parallel && n_series > 1) {
+    if (is.null(n_cores)) {
+      n_cores <- min(parallel::detectCores() - 1, 4)
+    }
+    
+    cl <- parallel::makeCluster(n_cores)
+    parallel::clusterEvalQ(cl, {
+      library(Rlgt)
+      library(forecast)
+    })
+    
+    # Export necessary functions
+    parallel::clusterExport(cl, c("blgt_forecast_from_zero_fixed", 
+                                  "generate_synthetic_series_individual",
+                                  "detect_frequency",
+                                  "parse_timestamps", 
+                                  "generate_future_timestamps",
+                                  "data_std", "n_synthetic", "n_scenarios", 
+                                  "frequency", "control_params", "first_fraction"), 
+                            envir = environment())
+    
+    results <- parallel::parLapply(cl, unique_series, function(series_name) {
+      series_data <- data_std[data_std$series_name == series_name, ]
+      generate_synthetic_series_individual(series_data, n_synthetic, n_scenarios, 
+                                           frequency, control_params, first_fraction = first_fraction)
+    })
+    
+    parallel::stopCluster(cl)
+    
+  } else {
+    # Sequential processing
+    results <- lapply(seq_along(unique_series), function(i) {
+      if (i %% 10 == 0) {
+        message(paste("Processing series", i, "of", n_series))
+      }
+      series_name <- unique_series[i]
+      series_data <- data_std[data_std$series_name == series_name, ]
+      generate_synthetic_series_individual(series_data, n_synthetic, n_scenarios, 
+                                           frequency, control_params, first_fraction = first_fraction)
+    })
+  }
+  
+  # Process results
+  successful_results <- results[sapply(results, function(x) x$success)]
+  failed_results <- results[!sapply(results, function(x) x$success)]
+  
+  # Combine scenarios
+  all_scenarios <- list()
+  for (result in successful_results) {
+    all_scenarios <- c(all_scenarios, result$scenarios)
+  }
+  
+  # Create combined dataframe
+  if (length(all_scenarios) > 0) {
+    combined_df <- do.call(rbind, all_scenarios)
+    
+    # Restore original column names
+    if (series_column != "series_name") {
+      names(combined_df)[names(combined_df) == "series_name"] <- series_column
+    }
+    if (timestamp_column != "start_timestamp") {
+      names(combined_df)[names(combined_df) == "start_timestamp"] <- timestamp_column
+    }
+    if (value_column != "series_value") {
+      names(combined_df)[names(combined_df) == "series_value"] <- value_column
+    }
+  } else {
+    combined_df <- data.frame()
+  }
+  
+  message(paste("\nSuccessfully processed", length(successful_results), 
+                "out of", n_series, "series"))
+  
+  return(list(
+    synthetic_data = combined_df,
+    successful_results = successful_results,
+    failed_results = failed_results,
+    summary = list(
+      total_series = n_series,
+      successful = length(successful_results),
+      failed = length(failed_results),
+      total_scenarios = length(all_scenarios),
+      parameters = list(
+        n_synthetic = n_synthetic,
+        n_scenarios = n_scenarios,
+        frequency = frequency,
+        first_fraction = first_fraction
+      )
+    )
+  ))
+}
+
+plot_series_with_scenarios <- function(original_data, synthetic_data, series_name, 
+                                       show_confidence = TRUE, max_scenarios = 15) {
+  
+  # Get original series data
+  orig_series <- original_data[original_data$series_name == series_name, ]
+  
+  # Get synthetic scenarios for this series
+  synth_series <- synthetic_data[synthetic_data$original_series == series_name, ]
+  
+  if (nrow(synth_series) == 0) {
+    warning(paste("No synthetic data found for series:", series_name))
+    return(NULL)
+  }
+  
+  # Prepare data for plotting
+  orig_series$type <- "Original"
+  orig_series$scenario <- 0
+  
+  # Prepare synthetic data
+  synth_plot <- synth_series[, c("start_timestamp", "series_value", "scenario")]
+  synth_plot$type <- paste0("Scenario_", synth_plot$scenario)
+  
+  # Combine for plotting
+  plot_data <- rbind(
+    orig_series[, c("start_timestamp", "series_value", "type", "scenario")],
+    synth_plot
+  )
+  
+  # Create base plot
+  p <- ggplot() +
+    {if (show_confidence && "lower_95" %in% names(synth_series)) {
+      conf_bands <- synth_series %>%
+        group_by(start_timestamp) %>%
+        summarise(
+          lower = min(lower_95),
+          upper = max(upper_95),
+          .groups = 'drop'
+        )
+      geom_ribbon(data = conf_bands,
+                  aes(x = start_timestamp, ymin = lower, ymax = upper),
+                  alpha = 0.2, fill = "blue")
+    }} +
+    geom_line(data = plot_data[plot_data$type != "Original", ],
+              aes(x = start_timestamp, y = series_value, 
+                  group = type, color = as.factor(scenario)),
+              alpha = 0.6, size = 0.8) +
+    geom_line(data = plot_data[plot_data$type == "Original", ],
+              aes(x = start_timestamp, y = series_value),
+              color = "black", size = 1.2) +
+    labs(title = paste("Original and Synthetic Scenarios:", series_name),
+         x = "Time", y = "Value") +
+    theme_minimal() +
+    theme(legend.position = "none")   # <-- drop the per-scenario legend
+  
+  return(p)
+}
+
+
+```
+Hourly: frequency = 24
+Daily: frequency = 365
+Weekly: frequency = 52
+Monthly: frequency = 12
+Quarterly: frequency = 4
+Yearly: frequency = 1
+
+
+
+
+
+
+
+
+
+
+m3_yearly_df
+```{r}
+df_yearly<-m3_yearly_df[1:14,]
+
+```
+
+
+
+```{r}
+
+
+start_time <- Sys.time()
+message("Starting synthetic dataset generation at: ", format(start_time, "%Y-%m-%d %H:%M:%S"))
+
+
+
+# Regenerate with fixed version
+synthetic_m3_yearly <- generate_synthetic_dataset_fixed(
+  data = df_yearly,
+  n_synthetic = 200, #length
+  n_scenarios = 20, # number of different series
+  frequency = 1,
+  parallel = TRUE,  # Use parallel for speed
+  n_cores = 5,
+  first_fraction = 1 # 1 all start of year 0.5 half half 0 all end of year 
+)
+
+
+end_time <- Sys.time()
+time_cost <- end_time - start_time
+
+message("Finished synthetic dataset generation at: ", format(end_time, "%Y-%m-%d %H:%M:%S"))
+message("Total time cost: ", round(as.numeric(time_cost, units = "mins"), 2), " minutes")
+message("Total time cost: ", round(as.numeric(time_cost, units = "hours"), 2), " hours")
+
+
+
+```
+
+```{r}
+library(ggplot2)
+# Plot series
+for (i in 1) {
+  series_name <- unique(df_yearly$series_name)[i]
+  p <- plot_series_with_scenarios(m3_yearly_df, synthetic_m3_yearly$synthetic_data, series_name, show_confidence = FALSE)
+  print(p)
+}
+
+
+```
+
+
+
+
+
+```{r}
+library(ggplot2)
+series_name <- unique(df_yearly$series_name)[1]
+# Filter each dataset to just this series
+real_data <- subset(m3_yearly_df, series_name == series_name)
+real_data <- real_data[1:20, ]  # first 20 rows, if you just want a quick look
+synth_data <- subset(synthetic_m3_yearly$synthetic_data, series_name == series_name)
+
+p_real <- ggplot(real_data, aes(x = start_timestamp, y = series_value)) +
+  geom_line(color = "skyblue", linewidth = 1) +
+  ggtitle(paste("Actual series:", series_name)) +
+  labs(x = "Year", y = "Value") +
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA),
+    panel.grid.minor = element_blank()
+  )
+
+p_synth <- ggplot(synth_data, aes(x = start_timestamp, y = series_value)) +
+  geom_line(color = "skyblue", linewidth = 1) +
+  ggtitle(paste("Synthetic series:", series_name)) +
+  labs(x = "Year", y = "Value") +
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA),
+    panel.grid.minor = element_blank()
+  )
+
+print(p_real)
+print(p_synth)
+
+```
+
+
+```{r}
+m3_yearly_syn<-synthetic_m3_yearly$synthetic_data
+
+
+```
+
+
+```{r}
+
+library(dplyr)
+
+m3_yearly_syn<-synthetic_m3_yearly$synthetic_data
+m3_yearly_syn$ts <- m3_yearly_syn$start_timestamp          # rename for clarity
+
+m3_yearly_syn %>%
+  mutate(series_id = paste(series_name, scenario, sep = "_"),
+         ts        = start_timestamp) %>%           # keep the ordinal step
+  select(series_id, ts, y = series_value) %>%       # drop other columns
+  group_by(series_id) 
+
+
+# Your monthly CIF data converts to:
+m3_yearly_pfn_data <- m3_yearly_syn %>%
+  select(
+    id = series_name,        # series identifier
+    ts = start_timestamp,    # 1,2,3,4... (monthly steps)
+    y = series_value        # monthly values
+  ) %>%
+  mutate(noise = 1) %>%
+  arrange(id, ts)
+
+
+
+```
+
+```{r}
+write.csv(m3_yearly_pfn_data, "m3_yearly_new_200.csv")
+
+```
+
+
+
+
+
+m3_monthly_df
+```{r}
+df_monthly_1<-df_monthly[1:14,]
+
+```
+
+
+```{r}
+
+
+start_time <- Sys.time()
+message("Starting synthetic dataset generation at: ", format(start_time, "%Y-%m-%d %H:%M:%S"))
+
+
+
+# Regenerate with fixed version
+synthetic_m3_monthly <- generate_synthetic_dataset_fixed(
+  data = df_monthly,
+  n_synthetic = 200, #length
+  n_scenarios = 100, # number of different series
+  frequency = 12,
+  parallel = TRUE,  # Use parallel for speed
+  n_cores = 5
+)
+
+
+end_time <- Sys.time()
+time_cost <- end_time - start_time
+
+message("Finished synthetic dataset generation at: ", format(end_time, "%Y-%m-%d %H:%M:%S"))
+message("Total time cost: ", round(as.numeric(time_cost, units = "mins"), 2), " minutes")
+message("Total time cost: ", round(as.numeric(time_cost, units = "hours"), 2), " hours")
+
+
+
+```
+
+```{r}
+library(ggplot2)
+# Plot series
+for (i in 1:5) {
+  series_name <- unique(df_monthly$series_name)[i]
+  p <- plot_series_with_scenarios(df_monthly, synthetic_m3_monthly$synthetic_data, series_name, show_confidence = FALSE)
+  print(p)
+}
+
+
+```
+
+```{r}
+m3_monthly_syn<-synthetic_m3_monthly$synthetic_data
+
+```
+
+
+```{r}
+
+library(dplyr)
+
+m3_monthly_syn<-synthetic_m3_monthly$synthetic_data
+m3_monthly_syn$ts <- m3_monthly_syn$start_timestamp          # rename for clarity
+
+m3_monthly_syn %>%
+  mutate(series_id = paste(series_name, scenario, sep = "_"),
+         ts        = start_timestamp) %>%           # keep the ordinal step
+  select(series_id, ts, y = series_value) %>%       # drop other columns
+  group_by(series_id) 
+
+
+# Your monthly CIF data converts to:
+m3_monthly_pfn_data <- m3_monthly_syn %>%
+  select(
+    id = series_name,        # series identifier
+    ts = start_timestamp,    # 1,2,3,4... (monthly steps)
+    y = series_value        # monthly values
+  ) %>%
+  mutate(noise = 1) %>%
+  arrange(id, ts)
+
+
+
+```
+
+```{r}
+write.csv(m3_monthly_pfn_data, "m3_monthly_new_200.csv")
+
+```
+
+
+
+
+
+
+
+
+m3_quarterly_df
+```{r}
+df_quarterly_1<-df_quarterly[1:36,]
+```
+
+```{r}
+
+
+start_time <- Sys.time()
+message("Starting synthetic dataset generation at: ", format(start_time, "%Y-%m-%d %H:%M:%S"))
+
+
+
+# Regenerate with fixed version
+synthetic_m3_quarterly <- generate_synthetic_dataset_fixed(
+  data = df_quarterly,
+  n_synthetic = 200, #length
+  n_scenarios = 200, # number of different series
+  frequency = 4,
+  parallel = TRUE,  # Use parallel for speed
+  n_cores = 5
+)
+
+
+end_time <- Sys.time()
+time_cost <- end_time - start_time
+
+message("Finished synthetic dataset generation at: ", format(end_time, "%Y-%m-%d %H:%M:%S"))
+message("Total time cost: ", round(as.numeric(time_cost, units = "mins"), 2), " minutes")
+message("Total time cost: ", round(as.numeric(time_cost, units = "hours"), 2), " hours")
+
+
+
+```
+
+```{r}
+library(ggplot2)
+# Plot series
+for (i in 1:10) {
+  series_name <- unique(df_quarterly$series_name)[i]
+  p <- plot_series_with_scenarios(df_quarterly, synthetic_m3_quarterly$synthetic_data, series_name, show_confidence = FALSE)
+  print(p)
+}
+
+
+```
+
+
+```{r}
+m3_quarterly_syn<-synthetic_m3_quarterly$synthetic_data
+
+```
+
+
+```{r}
+
+library(dplyr)
+
+m3_quarterly_syn<-synthetic_m3_quarterly$synthetic_data
+m3_quarterly_syn$ts <- m3_quarterly_syn$start_timestamp          # rename for clarity
+
+m3_quarterly_syn %>%
+  mutate(series_id = paste(series_name, scenario, sep = "_"),
+         ts        = start_timestamp) %>%           # keep the ordinal step
+  select(series_id, ts, y = series_value) %>%       # drop other columns
+  group_by(series_id) 
+
+
+# Your monthly CIF data converts to:
+m3_quarterly_pfn_data <- m3_quarterly_syn %>%
+  select(
+    id = series_name,        # series identifier
+    ts = start_timestamp,    # 1,2,3,4... (monthly steps)
+    y = series_value        # monthly values
+  ) %>%
+  mutate(noise = 1) %>%
+  arrange(id, ts)
+
+
+
+```
+
+```{r}
+write.csv(m3_quarterly_pfn_data, "m3_quarterly_new_200.csv")
+
+```
+
+
+
+
+
+
+
+m4_hourly_df
+```{r}
+m4_hourly_train_data_1<-m4_hourly_train_data[1:700,]
+```
+
+```{r}
+
+
+start_time <- Sys.time()
+message("Starting synthetic dataset generation at: ", format(start_time, "%Y-%m-%d %H:%M:%S"))
+
+
+
+# Regenerate with fixed version
+synthetic_m4_hourly <- generate_synthetic_dataset_fixed(
+  data = m4_hourly_train_data,
+  n_synthetic = 200, #length
+  n_scenarios = 1, # number of different series
+  frequency = 24,
+  parallel = TRUE,  # Use parallel for speed
+  n_cores = 4
+)
+
+
+end_time <- Sys.time()
+time_cost <- end_time - start_time
+
+message("Finished synthetic dataset generation at: ", format(end_time, "%Y-%m-%d %H:%M:%S"))
+message("Total time cost: ", round(as.numeric(time_cost, units = "mins"), 2), " minutes")
+message("Total time cost: ", round(as.numeric(time_cost, units = "hours"), 2), " hours")
+
+
+
+```
+
+```{r}
+library(ggplot2)
+# Plot series
+for (i in 1:10) {
+  series_name <- unique(m4_hourly_train_data$series_name)[i]
+  p <- plot_series_with_scenarios(m4_hourly_train_data, synthetic_m4_hourly$synthetic_data, series_name, show_confidence = FALSE)
+  print(p)
+}
+
+
+```
+
+
+```{r}
+
+library(dplyr)
+
+m4_hourly_syn<-synthetic_m4_hourly$synthetic_data
+m4_hourly_syn$ts <- m4_hourly_syn$start_timestamp          # rename for clarity
+
+m4_hourly_syn %>%
+  mutate(series_id = paste(series_name, scenario, sep = "_"),
+         ts        = start_timestamp) %>%           # keep the ordinal step
+  select(series_id, ts, y = series_value) %>%       # drop other columns
+  group_by(series_id) 
+
+
+# Your monthly CIF data converts to:
+m4_hourly_pfn_data <- m4_hourly_syn %>%
+  select(
+    id = series_name,        # series identifier
+    ts = start_timestamp,    # 1,2,3,4... (monthly steps)
+    y = series_value        # monthly values
+  ) %>%
+  mutate(noise = 1) %>%
+  arrange(id, ts)
+
+
+
+```
+
+```{r}
+write.csv(m4_hourly_pfn_data, "m4_hourly_200.csv")
+
+```
+
+
+
+
+
+m4_daily_df
+```{r}
+m4_daily_train_data_1<-m4_daily_train_data[1:1005,]
+```
+
+```{r}
+
+
+start_time <- Sys.time()
+message("Starting synthetic dataset generation at: ", format(start_time, "%Y-%m-%d %H:%M:%S"))
+
+
+
+# Regenerate with fixed version
+synthetic_m4_daily <- generate_synthetic_dataset_fixed(
+  data = m4_daily_train_data_1,
+  n_synthetic = 200, #length
+  n_scenarios = 1, # number of different series
+  frequency = 365,
+  parallel = TRUE,  # Use parallel for speed
+  n_cores = 4
+)
+
+
+end_time <- Sys.time()
+time_cost <- end_time - start_time
+
+message("Finished synthetic dataset generation at: ", format(end_time, "%Y-%m-%d %H:%M:%S"))
+message("Total time cost: ", round(as.numeric(time_cost, units = "mins"), 2), " minutes")
+message("Total time cost: ", round(as.numeric(time_cost, units = "hours"), 2), " hours")
+
+
+
+```
+
+```{r}
+library(ggplot2)
+# Plot series
+for (i in 1:10) {
+  series_name <- unique(m4_daily_train_data$series_name)[i]
+  p <- plot_series_with_scenarios(m4_daily_train_data, synthetic_m4_daily$synthetic_data, series_name, show_confidence = FALSE)
+  print(p)
+}
+
+
+```
+
+
+```{r}
+
+library(dplyr)
+
+m4_daily_syn<-synthetic_m4_daily$synthetic_data
+m4_daily_syn$ts <- m4_daily_syn$start_timestamp          # rename for clarity
+
+m4_daily_syn %>%
+  mutate(series_id = paste(series_name, scenario, sep = "_"),
+         ts        = start_timestamp) %>%           # keep the ordinal step
+  select(series_id, ts, y = series_value) %>%       # drop other columns
+  group_by(series_id) 
+
+
+# Your monthly CIF data converts to:
+m4_daily_pfn_data <- m4_daily_syn %>%
+  select(
+    id = series_name,        # series identifier
+    ts = start_timestamp,    # 1,2,3,4... (monthly steps)
+    y = series_value        # monthly values
+  ) %>%
+  mutate(noise = 1) %>%
+  arrange(id, ts)
+
+
+
+```
+
+```{r}
+write.csv(m4_daily_pfn_data, "m4_daily_200.csv")
+
+```
+
+
+
+
+
+
+
+m4_weekly_df
+```{r}
+m4_weekly_train_data_1<-m4_weekly_train_data[1:2179,]
+```
+
+```{r}
+
+
+start_time <- Sys.time()
+message("Starting synthetic dataset generation at: ", format(start_time, "%Y-%m-%d %H:%M:%S"))
+
+
+
+# Regenerate with fixed version
+synthetic_m4_weekly <- generate_synthetic_dataset_fixed(
+  data = m4_weekly_train_data,
+  n_synthetic = 200, #length
+  n_scenarios = 400, # number of different series
+  frequency = 52,
+  parallel = TRUE,  # Use parallel for speed
+  n_cores = 4
+)
+
+
+end_time <- Sys.time()
+time_cost <- end_time - start_time
+
+message("Finished synthetic dataset generation at: ", format(end_time, "%Y-%m-%d %H:%M:%S"))
+message("Total time cost: ", round(as.numeric(time_cost, units = "mins"), 2), " minutes")
+message("Total time cost: ", round(as.numeric(time_cost, units = "hours"), 2), " hours")
+
+
+
+```
+
+```{r}
+library(ggplot2)
+# Plot series
+for (i in 1:10) {
+  series_name <- unique(m4_weekly_train_data$series_name)[i]
+  p <- plot_series_with_scenarios(m4_weekly_train_data, synthetic_m4_weekly$synthetic_data, series_name, show_confidence = FALSE)
+  print(p)
+}
+
+
+```
+
+
+```{r}
+
+library(dplyr)
+
+m4_weekly_syn<-synthetic_m4_weekly$synthetic_data
+m4_weekly_syn$ts <-m4_weekly_syn$start_timestamp          # rename for clarity
+
+m4_weekly_syn %>%
+  mutate(series_id = paste(series_name, scenario, sep = "_"),
+         ts        = start_timestamp) %>%           # keep the ordinal step
+  select(series_id, ts, y = series_value) %>%       # drop other columns
+  group_by(series_id) 
+
+
+# Your monthly CIF data converts to:
+m4_weekly_pfn_data <- m4_weekly_syn %>%
+  select(
+    id = series_name,        # series identifier
+    ts = start_timestamp,    # 1,2,3,4... (monthly steps)
+    y = series_value        # monthly values
+  ) %>%
+  mutate(noise = 1) %>%
+  arrange(id, ts)
+
+
+
+```
+
+```{r}
+write.csv(m4_weekly_pfn_data, "m4_weekly_200.csv")
+
+```
+
+
+m4_yearly_df
+```{r}
+m4_yearly_train_data_1<-m4_yearly_train_data[1:37,]
+```
+
+```{r}
+
+
+start_time <- Sys.time()
+message("Starting synthetic dataset generation at: ", format(start_time, "%Y-%m-%d %H:%M:%S"))
+
+
+
+# Regenerate with fixed version
+synthetic_m4_yearly <- generate_synthetic_dataset_fixed(
+  data = m4_yearly_train_data_1,
+  n_synthetic = 50, #length
+  n_scenarios = 100, # number of different series
+  frequency = 1,
+  parallel = TRUE,  # Use parallel for speed
+  n_cores = 4
+)
+
+
+end_time <- Sys.time()
+time_cost <- end_time - start_time
+
+message("Finished synthetic dataset generation at: ", format(end_time, "%Y-%m-%d %H:%M:%S"))
+message("Total time cost: ", round(as.numeric(time_cost, units = "mins"), 2), " minutes")
+message("Total time cost: ", round(as.numeric(time_cost, units = "hours"), 2), " hours")
+
+
+
+```
+
+```{r}
+library(ggplot2)
+# Plot series
+for (i in 1:10) {
+  series_name <- unique(m4_yearly_train_data$series_name)[i]
+  p <- plot_series_with_scenarios(m4_yearly_train_data, synthetic_m4_yearly$synthetic_data, series_name, show_confidence = FALSE)
+  print(p)
+}
+
+
+```
+
+
+```{r}
+
+library(dplyr)
+
+m4_yearly_syn<-synthetic_m4_yearly$synthetic_data
+m4_yearly_syn$ts <-m4_weekly_syn$start_timestamp          # rename for clarity
+
+m4_yearly_syn %>%
+  mutate(series_id = paste(series_name, scenario, sep = "_"),
+         ts        = start_timestamp) %>%           # keep the ordinal step
+  select(series_id, ts, y = series_value) %>%       # drop other columns
+  group_by(series_id) 
+
+
+# Your monthly CIF data converts to:
+m4_weekly_pfn_data <- m4_weekly_syn %>%
+  select(
+    id = series_name,        # series identifier
+    ts = start_timestamp,    # 1,2,3,4... (monthly steps)
+    y = series_value        # monthly values
+  ) %>%
+  mutate(noise = 1) %>%
+  arrange(id, ts)
+
+
+
+```
+
+```{r}
+write.csv(m4_weekly_pfn_data, "m4_weekly_200.csv")
+
+```
+

@@ -1,0 +1,40 @@
+# Yearly LGT-PFN training settings.
+
+# --- data -------------------------------------------------------------------
+# `prior/` is a symlink to ../pytorch_version/prior. Produced once by:
+#   python convert_prior.py --csv <generator csv> --out prior/
+prior_values: prior/m3_yearly_200.y.npy
+prior_meta:   prior/m3_yearly_200.meta.npz
+
+output_dir: runs
+model_save_name: lgtpfn_yearly_f64
+
+# --- horizon ----------------------------------------------------------------
+prediction_length: 6
+max_prediction_length: 6
+context_length: 200
+
+# --- objective --------------------------------------------------------------
+quantile_levels: [0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95]
+# All ones gives a flat mean over horizons.
+horizon_weights: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+
+# --- optimisation -----------------------------------------------------------
+learning_rate: 0.0001
+batch_size: 1024
+shuffle_buffer: 5000
+# The window stream is endless (183 windows x 161,250 series), so the epoch
+# length is declared rather than derived. A full pass would be ~28,817 batches.
+steps_per_epoch: 160
+epochs: 1000
+gradient_clip_val: null   # no clipping
+seed: 42
+
+accelerator: auto
+# Number of GPUs. An integer, or "auto"/-1 for every visible device.
+# `batch_size` above is the global batch and is split across devices, so changing
+# this scales throughput without changing the optimisation:
+#   devices: 1 -> 1024 per rank    devices: 2 -> 512    devices: 4 -> 256
+devices: 1
+strategy: auto        # "ddp" is picked automatically when devices > 1
+progress_bar: true

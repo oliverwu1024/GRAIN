@@ -1,0 +1,14 @@
+torch==2.11.0
+lightning==2.6.1
+gluonts==0.15.1
+numpy==1.26.4
+pandas==2.3.3
+pyyaml==6.0.3
+pyarrow==23.0.1
+pydantic==2.12.5
+lightning-utilities==0.15.3
+torchmetrics==1.9.0
+fsspec==2023.10.0
+typing-extensions==4.15.0
+toolz==0.12.1
+tqdm==4.67.3
