@@ -81,20 +81,20 @@ blgt_forecast_from_zero_fixed <- function(rv, h, ns = 1e+06,
     }
     
     l = prev.level
-    
+    #rho
     if (seasonal) {
       exp.val = exp(log.s[, i + m]) * (l + rv$w[I, 1] * l^rv$rho[I] + rv$w[I, 2] * bS)
     } else {
       exp.val = l + rv$w[I, 1] * l^rv$rho[I] + rv$w[I, 2] * bS
     }
-    
+    #tau xi2 sigma2
     scale = sqrt(rv$xi2[I] + rv$sigma2[I] * l^(2 * rv$tau[I]))
     
     # Generate different random errors for each sample
     e = rt(ns, rv$nu[I]) * scale
     
     yf[, i] = pmax(pmin(exp.val + e, 1e+38), 0.001)
-    
+    # alpha
     if (seasonal) {
       cur.level = pmax(0.001, rv$alpha[I] * yf[, i]/exp(log.s[, i + m]) + 
                          (1 - rv$alpha[I]) * prev.level)
@@ -109,7 +109,7 @@ blgt_forecast_from_zero_fixed <- function(rv, h, ns = 1e+06,
       y.on.l[, i + m] = log(yf[, i]/cur.level)
       y.on.l[idx, i + m] <- y.on.l[idx, i]
     }
-    
+    #beta
     bS = rv$beta[I] * (cur.level - prev.level) + (1 - rv$beta[I]) * bS
     prev.level = cur.level
   }

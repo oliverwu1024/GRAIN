@@ -1,4 +1,4 @@
-"""GluonTS estimator and predictor for the yearly LGT-PFN.
+"""GluonTS estimator and predictor for the yearly GRAIN.
 
 `prediction_length` is a predictor setting, not a network one: the head is always
 built for `max_prediction_length` (6) steps and shorter horizons are served by
