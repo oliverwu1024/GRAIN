@@ -1,4 +1,4 @@
-"""Layers of the yearly LGT-PFN.
+"""Layers of the yearly GRAIN.
 
 Two quirks are kept deliberately rather than fixed, and are marked `QUIRK (kept)`
 at their class: the year is discarded by a degenerate LayerNorm, and the fusion
@@ -292,7 +292,7 @@ class GatedFusion(nn.Module):
 # --------------------------------------------------------------------------
 # encoder / pooling
 # --------------------------------------------------------------------------
-class LGTPFNEncoderLayer(nn.Module):
+class GRAINEncoderLayer(nn.Module):
     """Pre-norm transformer block. Not causal; only key padding is masked."""
 
     def __init__(self, embed_dim: int, num_heads: int, d_ff: int, dropout: float):

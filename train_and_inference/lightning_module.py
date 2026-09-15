@@ -8,7 +8,7 @@ from gluonts.dataset.field_names import FieldName
 
 from constants import ADAM_EPSILON, LEARNING_RATE
 from dataset import FEAT_TIME
-from model import LGTPFNModel
+from model import GRAINModel
 
 PAST_TARGET = f"past_{FieldName.TARGET}"
 PAST_FEAT_TIME = f"past_{FEAT_TIME}"
@@ -26,7 +26,7 @@ def observed_from_batch(batch: Dict[str, torch.Tensor]) -> torch.Tensor:
     return (is_pad < 0.5) & (observed > 0.5)
 
 
-class LGTPFNLightningModule(pl.LightningModule):
+class GRAINLightningModule(pl.LightningModule):
 
 
     def __init__(
@@ -37,7 +37,7 @@ class LGTPFNLightningModule(pl.LightningModule):
     ):
         super().__init__()
         self.save_hyperparameters()
-        self.model = LGTPFNModel(**(model_kwargs or {}))
+        self.model = GRAINModel(**(model_kwargs or {}))
         self.lr = lr
         self.weight_decay = weight_decay
 

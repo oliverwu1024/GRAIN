@@ -36,7 +36,7 @@ from dataset import (
 )
 from lightning_module import (
     FUTURE_TARGET,
-    LGTPFNLightningModule,
+    GRAINLightningModule,
     PAST_FEAT_TIME,
     PAST_IS_PAD,
     PAST_OBSERVED,
@@ -60,7 +60,7 @@ class _InferenceNet(torch.nn.Module):
     The model denormalises internally, so loc/scale are None.
     """
 
-    def __init__(self, module: LGTPFNLightningModule, prediction_length: int):
+    def __init__(self, module: GRAINLightningModule, prediction_length: int):
         super().__init__()
         self.module = module
         self.prediction_length = prediction_length
@@ -76,7 +76,7 @@ class _InferenceNet(torch.nn.Module):
 
 def build_predictor(
     input_transform: Transformation,
-    module: LGTPFNLightningModule,
+    module: GRAINLightningModule,
     prediction_length: int,
     quantile_levels=QUANTILE_LEVELS,
     batch_size: int = 256,
@@ -102,7 +102,7 @@ def build_predictor(
     )
 
 
-class LGTPFNEstimator(PyTorchLightningEstimator):
+class GRAINEstimator(PyTorchLightningEstimator):
     """Trains the network at full head width; horizon is chosen at predict time."""
 
     @validated()
@@ -156,8 +156,8 @@ class LGTPFNEstimator(PyTorchLightningEstimator):
             min_past=self.min_past,
         )
 
-    def create_lightning_module(self) -> LGTPFNLightningModule:
-        return LGTPFNLightningModule(
+    def create_lightning_module(self) -> GRAINLightningModule:
+        return GRAINLightningModule(
             model_kwargs=self.model_kwargs, lr=self.lr, weight_decay=self.weight_decay
         )
 
@@ -189,7 +189,7 @@ class LGTPFNEstimator(PyTorchLightningEstimator):
     def create_predictor(
         self,
         transformation: Transformation,
-        module: LGTPFNLightningModule,
+        module: GRAINLightningModule,
         prediction_length: Optional[int] = None,
         device: Union[str, torch.device] = "cpu",
     ) -> PyTorchPredictor:

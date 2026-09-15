@@ -1,8 +1,7 @@
 rank,model,model_type,testdata_leakage,eval_metrics/mean_weighted_sum_quantile_loss,normalized
 1,TurkForecast-FM-Chronos2-LoRA-v1,fine-tuned,No,0.0494973709184788,0.3609109603125449
 2,timesfm_2_0_500m,pretrained,Yes,0.0906445744760973,0.6609365268141335
-3,LSGT-PFN-torch,zero-shot,No,0.1034077154041956,0.7539991958708574
-3,GRAIN,,,0.1034077154041956,0.7539991958708574
+3,GRAIN,zero-shot,No,0.1034077154041956,0.7539991958708574
 5,Moirai_large,zero-shot,No,0.104,0.7583178495343449
 6,Moirai_base,zero-shot,No,0.105,0.7656093673183291
 6,moirai_small,zero-shot,No,0.105,0.7656093673183291

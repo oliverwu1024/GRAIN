@@ -1,4 +1,4 @@
-"""The yearly LGT-PFN network and its pinball objective."""
+"""The yearly GRAIN network and its pinball objective."""
 
 from typing import Dict, Optional, Sequence
 
@@ -30,7 +30,7 @@ from modules import (
     AttentionPooling,
     DualPatchEmbedding,
     GatedFusion,
-    LGTPFNEncoderLayer,
+    GRAINEncoderLayer,
     SeasonalDecomposition,
     TemporalFeatureEmbedding,
     TrendDecomposition,
@@ -39,7 +39,7 @@ from modules import (
 from scalers import masked_variance_normalization
 
 
-class LGTPFNModel(nn.Module):
+class GRAINModel(nn.Module):
     """Prior-fitted network with a fixed-width multi-horizon quantile head.
 
     The head always emits `pred_len` steps; shorter horizons are served by slicing
@@ -96,7 +96,7 @@ class LGTPFNModel(nn.Module):
         self.post_fuse_norm = nn.LayerNorm(embed_dim, eps=LN_EPS)
 
         self.encoder_layers = nn.ModuleList(
-            LGTPFNEncoderLayer(embed_dim, num_heads, d_ff, dropout)
+            GRAINEncoderLayer(embed_dim, num_heads, d_ff, dropout)
             for _ in range(num_layers)
         )
         self.final_norm = nn.LayerNorm(embed_dim, eps=LN_EPS)

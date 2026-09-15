@@ -5,7 +5,7 @@ import torch
 
 # float64 end to end. The prior reaches ~1e38, and squaring that when computing
 # the variance overflows float32 -> inf -> NaN.
-# This is the only dtype knob; LGTPFNModel casts itself in __init__.
+# This is the only dtype knob; GRAIN casts itself in __init__.
 FLOAT_DTYPE = torch.float64
 
 # The numpy scalar type, not a np.dtype instance: gluonts validates

@@ -1,4 +1,4 @@
-# Yearly LGT-PFN training settings.
+# GRAIN training settings.
 
 # --- data -------------------------------------------------------------------
 # `prior/` is a symlink to ../pytorch_version/prior. Produced once by:
@@ -7,7 +7,7 @@ prior_values: prior/m3_yearly_200.y.npy
 prior_meta:   prior/m3_yearly_200.meta.npz
 
 output_dir: runs
-model_save_name: lgtpfn_yearly_f64
+model_save_name: grain_yearly_f64
 
 # --- horizon ----------------------------------------------------------------
 prediction_length: 6

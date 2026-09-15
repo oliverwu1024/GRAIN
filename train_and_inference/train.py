@@ -36,7 +36,7 @@ from constants import (
     TARGET_LEN,
 )
 from dataset import PriorDataset
-from estimator import LGTPFNEstimator
+from estimator import GRAINEstimator
 
 
 def srun_launched() -> bool:
@@ -77,8 +77,8 @@ def resolve_run_dir(cfg: Dict[str, Any]) -> str:
     starts at once, so a per-process timestamp would give each its own directory.
     The job id is the same across tasks, so prefer it.
     """
-    name = cfg.get("model_save_name", "lgtpfn_yearly")
-    run_id = os.environ.get("LGTPFN_RUN_ID")
+    name = cfg.get("model_save_name", "grain_yearly")
+    run_id = os.environ.get("GRAIN_RUN_ID")
     if run_id is None:
         job = os.environ.get("SLURM_JOB_ID")
         stamp = (
@@ -86,7 +86,7 @@ def resolve_run_dir(cfg: Dict[str, Any]) -> str:
             else datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
         )
         run_id = f"{name}.{stamp}"
-        os.environ["LGTPFN_RUN_ID"] = run_id
+        os.environ["GRAIN_RUN_ID"] = run_id
     out_dir = os.path.join(cfg.get("output_dir", "runs"), run_id)
     os.makedirs(out_dir, exist_ok=True)
     return out_dir
@@ -130,7 +130,7 @@ def main() -> None:
     print(f"steps/epoch: {steps}   epochs: {epochs}   "
           f"checkpoint: {os.path.join(ckpt_dir, 'model.ckpt')} (rewritten each epoch)")
 
-    estimator = LGTPFNEstimator(
+    estimator = GRAINEstimator(
         prediction_length=cfg.get("prediction_length", TARGET_LEN),
         max_prediction_length=cfg.get("max_prediction_length", TARGET_LEN),
         context_length=cfg.get("context_length", MAX_HISTORY),

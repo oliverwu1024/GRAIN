@@ -27,12 +27,12 @@ from dataset import (
 )
 from estimator import build_predictor
 from eval_metrics import SMAPE, naive_MASE, seasonal_MASE
-from lightning_module import LGTPFNLightningModule
+from lightning_module import GRAINLightningModule
 
 # ==========================================================================
 # CONFIG
 # ==========================================================================
-WEIGHTS = "runs/lgtpfn_yearly_f64.latest/checkpoints/model.ckpt"
+WEIGHTS = "runs/grain_yearly_f64.latest/checkpoints/model.ckpt"
 SERIES_DIR = "../m3_yearly_validation"
 PREDICTION_LENGTH = 6
 
@@ -44,8 +44,8 @@ NUM_WINDOWS = 1
 SAVE_TXT = False         # per-series .txt reports
 SAVE_PLOTS = False       # per-series .png plots
 
-OUTPUT_DIR = "./lgtpfn/m3_yearly"
-MODEL_NAME = "LGT-PFN"
+OUTPUT_DIR = "./grain/m3_yearly"
+MODEL_NAME = "GRAIN"
 SEASONALITY = 1          # 1 for yearly
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 BATCH_SIZE = 256
@@ -174,7 +174,7 @@ def load_predictor(
     does not cover still land in float64.
     """
     torch.set_default_dtype(FLOAT_DTYPE)
-    module = LGTPFNLightningModule.load_from_checkpoint(checkpoint, map_location=device)
+    module = GRAINLightningModule.load_from_checkpoint(checkpoint, map_location=device)
     module.eval()
 
     transform = build_base_transformation() + build_instance_splitter(
@@ -521,7 +521,7 @@ def main() -> None:
     import argparse
 
     p = argparse.ArgumentParser(
-        description="Yearly LGT-PFN scoring, using eval_metrics.py.",
+        description="Yearly GRAIN scoring, using eval_metrics.py.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     p.add_argument("-w", "--weights", default=WEIGHTS,

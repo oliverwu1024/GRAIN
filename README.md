@@ -15,7 +15,7 @@ pip install -r environments.txt
 
 ## The prior
 
-Can be downloaded at [here](https://drive.google.com/drive/folders/1-xkfbAMVi_SD7FywKDtvtGCcV0u4n-hG?usp=drive_link)
+Can be downloaded at (commented out for double blind review)<!--[commented out for double blind review](https://drive.google.com/drive/folders/1-xkfbAMVi_SD7FywKDtvtGCcV0u4n-hG?usp=drive_link)-->
 
 or 
 
@@ -45,9 +45,9 @@ python train.py -c config.example.yaml
 
 
 ## Inference
-Weights can be downloaded [here](https://drive.google.com/drive/folders/1lBZ48EqHlU61-7Ua8a6jcl8q0SXazlHK?usp=sharing)
+Weights can be downloaded commented out for double blind review<!--[here](https://drive.google.com/drive/folders/1lBZ48EqHlU61-7Ua8a6jcl8q0SXazlHK?usp=sharing)-->
 
-M3 yearly validation files can be downloaded [here](https://drive.google.com/drive/folders/1kNlgNDtKzhBHBRjjXHxObwatSKgQljNF?usp=sharing)
+M3 yearly validation files can be downloaded located at the m3_yearly_validation folder.
 
 
 Scores a directory of `T{n}.csv` files (columns `date,OT`):
