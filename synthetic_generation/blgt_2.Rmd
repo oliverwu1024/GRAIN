@@ -794,7 +794,7 @@ m3_yearly_pfn_data <- m3_yearly_syn %>%
 ```
 
 ```{r}
-write.csv(m3_yearly_pfn_data, "m3_yearly_new_200.csv")
+write.csv(m3_yearly_pfn_data, "m3_yearly_200.csv")
 
 ```
 

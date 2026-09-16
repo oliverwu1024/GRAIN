@@ -1,0 +1,7 @@
+.RData
+.Rhistory
+__pycache__/
+*.pyc
+train_and_inference/prior/m3_yearly_200.y.npy
+train_and_inference/prior/m3_yearly_200.meta.npz
+convert_prior/m3_yearly_200.csv

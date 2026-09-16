@@ -365,7 +365,7 @@ generate_timestamps_from_date <- function(n_values, frequency, start_date) {
 
 
 
-m3_yearly_df<-read_tsf("") #file here
+m3_yearly_df<-read_tsf("m3_yearly_dataset.tsf") # downloaded .tsf, placed in this folder
 
 write.csv(m3_yearly_df, "m3_yearly.csv")
 

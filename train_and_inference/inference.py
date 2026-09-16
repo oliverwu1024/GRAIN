@@ -32,7 +32,7 @@ from lightning_module import GRAINLightningModule
 # ==========================================================================
 # CONFIG
 # ==========================================================================
-WEIGHTS = "runs/grain_yearly_f64.latest/checkpoints/model.ckpt"
+WEIGHTS = "model.ckpt"
 SERIES_DIR = "../m3_yearly_validation"
 PREDICTION_LENGTH = 6
 
