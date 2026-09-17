@@ -15,7 +15,7 @@ pip install -r environments.txt
 
 ## The prior
 
-Can be downloaded at (commented out for double blind review)<!--[commented out for double blind review](https://drive.google.com/drive/folders/1-xkfbAMVi_SD7FywKDtvtGCcV0u4n-hG?usp=drive_link)-->
+Can be downloaded at --[here (anonymous google drive)](https://drive.google.com/drive/folders/1bJGhHVUo_fgY_Bj21H0HVkJNtCewk3GW?usp=sharing)-->
 
 or 
 
@@ -45,7 +45,7 @@ python train.py -c config.example.yaml
 
 
 ## Inference
-Weights can be downloaded commented out for double blind review<!--[here](https://drive.google.com/drive/folders/1lBZ48EqHlU61-7Ua8a6jcl8q0SXazlHK?usp=sharing)-->
+Weights is already in the repo in /train_and_inference/model.ckpt
 
 M3 yearly validation files can be downloaded located at the m3_yearly_validation folder.
 
